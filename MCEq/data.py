@@ -22,6 +22,9 @@ validating data structures:
 import numpy as np
 from mceq_config import config, dbg
 from misc import normalize_hadronic_model_name
+import warnings
+
+
 
 
 class MCEqParticle(object):
@@ -354,7 +357,6 @@ class InteractionYields(object):
             self._decompress(fname)
 
         yield_dict = pickle.load(open(fname.replace('.bz2', '.ppd'), 'rb'))
-
         self.e_grid = yield_dict.pop('evec')
         self.e_bins = yield_dict.pop('ebins')
         self.weights = yield_dict.pop('weights')
@@ -362,10 +364,8 @@ class InteractionYields(object):
         self.projectiles = yield_dict.pop('projectiles')
         self.secondary_dict = yield_dict.pop('secondary_dict')
         self.nspec = yield_dict.pop('nspec')
-
         self.yields = yield_dict
 
-        #  = np.diag(self.e_bins[1:] - self.e_bins[:-1])
         self.dim = self.e_grid.size
         self.no_interaction = np.zeros(self.dim**2).reshape(self.dim, self.dim)
 
@@ -546,7 +546,7 @@ class InteractionYields(object):
           prim_pdg (int): interacting (primary) particle PDG ID
           sec_pdg (int): secondary particle PDG ID
         """
-
+        
         if ((prim_pdg, sec_pdg) not in self.mod_pprod.keys() or
                 self.mod_pprod[(prim_pdg, sec_pdg)][:2] !=
             (x_func.__name__, args)):
@@ -660,6 +660,7 @@ class InteractionYields(object):
                       self.iam + " already loaded.")
             return False
         else:
+            print('Load again')
             self._load(interaction_model)
 
         if interaction_model != self.iam:
@@ -714,7 +715,6 @@ class InteractionYields(object):
                     "for {0}, {1}->{2}".format(self.iam, projectile, daughter))
             return False
 
-        return True
 
     def get_y_matrix(self, projectile, daughter):
         """Returns a ``DIM x DIM`` yield matrix.
@@ -728,7 +728,7 @@ class InteractionYields(object):
         Note:
           In the current version, the matrices have to be multiplied by the
           bin widths. In later versions they will be stored with the multiplication
-          carried out.
+          carried out.--> outdated comment
         """
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
 
@@ -899,6 +899,60 @@ class InteractionYields(object):
 
         self._gen_particle_list()
 
+    def _inject_DataDriven_Yields(self,model=(None,'all')):
+        """Overwrites hadronic interaction yields of the yield
+        dictionary for the current interaction model with yields from
+        a data driven model (NA49 experiment)
+
+        The function walks through all (projectile, daughter)
+        combinations where the yield is available from data and 
+        replaces the yield matrices with those from the ``model``.
+
+        Args:
+          model (bool): 
+
+        Raises:
+          NotImplementedError: if model string unknown.
+        """
+        
+        if (model[0] is None) or (model[0] not in ['pp','pC','pp_pC']):
+            return
+        
+        from os.path import join
+        if dbg > 0:
+            print('NA49 data from {0:s} interactions used to create YieldMatrix. \n'
+                .format(model))
+
+        #Load NA49 pp yields
+        _yield = np.load(join(config['data_dir'],'na49_yields_'+model[0]+'.npy')).item()
+        
+        e_grid = _yield.pop('e_grid')
+        if model[1] is 'all':
+            #list of particles that should be replaced
+            r_list = [211,-211,321,-321,2212,-2212,2112]
+        else:
+            r_list = model[1]
+
+        #check that na49 yields are evaluated on same energy grid
+        #assert(np.all(np.round(e_grid,5)==np.round(self.e_grid,5)))
+        repl = list()
+        for (proj, sec), m_i in _yield.iteritems():
+            #check if projectile secondary combination is allowed
+            if self.secondary_dict.has_key(proj) and sec in self.secondary_dict.get(proj):
+                #if so, replace the model interaction yield with data driven approach
+                if sec in r_list:
+                    self.yields[(proj,sec)] = (_yield[(proj,sec)]).dot(self.weights)
+                    repl.append(sec)
+        
+        if len(r_list) != len(repl):
+            warnings.warn('Tried to replace {0} particle(s) in yield matrix without success!'.format(set(r_list).difference(repl)))
+
+        if dbg > 0:
+            print('Replaced secondaries: {0}'.format(repl))
+
+        return
+
+
     def __repr__(self):
         a_string = 'Possible (projectile,secondary) configurations:\n'
         for key in sorted(self.yields.keys()):
@@ -956,7 +1010,6 @@ class DecayYields(object):
 
         self.daughter_dict = self.decay_dict.pop('daughter_dict')
         self.weights = self.decay_dict.pop('weights')
-
         for mother in config["adv_set"]["disable_decays"]:
             if dbg > 1:
                 print("DecayYields:_load():: switching off " +
@@ -983,15 +1036,13 @@ class DecayYields(object):
 
             self.mothers = self.daughter_dict.keys()
 
-        self._gen_particle_list(mother_list)
+        self._gen_particle_list()
 
-    def _gen_particle_list(self, mother_list):
+    def _gen_particle_list(self):
         """Saves a list of all particle species in the decay dictionary.
 
         """
-
         # Look up all particle species that a supported by selected model
-
         for p, l in self.daughter_dict.iteritems():
             self.particle_list += [p]
             self.particle_list += l
@@ -1110,10 +1161,6 @@ class DecayYields(object):
         Returns:
           numpy.array: decay matrix
 
-        Note:
-          In the current version, the matrices have to be multiplied by the
-          bin widths. In later versions they will be stored with the multiplication
-          carried out.
         """
         if dbg > 0 and not self.is_daughter(mother, daughter):
             print("DecayYields:get_d_matrix():: trying to get empty matrix" +
@@ -1225,9 +1272,10 @@ class HadAirCrossSections(object):
         except IOError:
             self._decompress(fname)
             self.cs_dict = pickle.load(open(fname, 'rb'))
-
+        
         # normalise hadronic model names
         old_keys = [k for k in self.cs_dict if k != "evec"]
+
         for old_key in old_keys:
             new_key = normalize_hadronic_model_name(old_key)
             self.cs_dict[new_key] = self.cs_dict.pop(old_key)
