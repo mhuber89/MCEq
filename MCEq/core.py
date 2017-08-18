@@ -64,7 +64,7 @@ class MCEqRun(object):
 
     def __init__(self, interaction_model, density_model, primary_model,
                  theta_deg, adv_set, obs_ids, *args, **kwargs):
-
+        
         from ParticleDataTool import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
 
@@ -142,7 +142,8 @@ class MCEqRun(object):
         # Set interaction model and compute grids and matrices
         if interaction_model is not None:
             self.delay_pmod_init = False
-            self.set_interaction_model(interaction_model)
+            self.set_interaction_model(interaction_model,na49_model=
+                kwargs.pop('na49_model',(None,'all')))
         else:
             self.delay_pmod_init = True
 
@@ -214,11 +215,11 @@ class MCEqRun(object):
         self.mu_dEdX = pickle.load(
             open(join(config['data_dir'], config['mu_eloss_fname']),
                  'rb')).astype(self.fl_pr) * 1e-3  # ... to GeV
+        
         # Left index of first muon species and number of
         # muon species including aliases
         # Find first muon species in the list
         #(muons have inices next to each other but may start from a different category)
-        min_id = 100000
 
         min_id_pl = min([
             self.pdg2pref[mu_id].lidx()
@@ -638,11 +639,10 @@ class MCEqRun(object):
         self._init_alias_tables()
         self._init_default_matrices(skip_D_matrix=False)
 
-    def set_interaction_model(self,
-                              interaction_model,
-                              charm_model=None,
-                              force=False):
-        """Sets interaction model and/or an external charm model for calculation.
+    
+    def set_interaction_model(self, interaction_model, charm_model=None, na49_model=(None,'all'),
+            force=False):
+        r"""Sets interaction model and/or an external charm model for calculation.
 
         Decay and interaction matrix will be regenerated automatically
         after performing this call.
@@ -669,8 +669,10 @@ class MCEqRun(object):
         self.yields_params['interaction_model'] = interaction_model
         self.yields_params['charm_model'] = charm_model
 
-        self.y.set_interaction_model(interaction_model)
+        self.y.set_interaction_model(interaction_model,force=force) #otherwise na49 yields can not be removed again
         self.y._inject_custom_charm_model(charm_model)
+
+        self.y._inject_DataDriven_Yields(na49_model)
 
         self.cs_params['interaction_model'] = interaction_model
         self.cs.set_interaction_model(interaction_model)
@@ -685,10 +687,13 @@ class MCEqRun(object):
                 p.secondaries = \
                     self.y.secondary_dict[p.pdgid]
             elif p.pdgid in self.ds.daughter_dict:
+                # first time that this property is defined for MCEqParticle() ??
+                #--> error if this variable is called for projectile particles
                 p.daughters = self.ds.daughters(p.pdgid)
                 p.is_projectile = False
             else:
                 p.is_projectile = False
+
 
         # initialize matrices
         self._init_default_matrices(skip_D_matrix=True)
@@ -937,6 +942,7 @@ class MCEqRun(object):
         # Need to regenerate matrices completely
         return int(init)
 
+        #function always finishes before coming to this point??
         if init and not delay_init:
             self._init_default_matrices(skip_D_matrix=True)
             return 0
@@ -958,9 +964,10 @@ class MCEqRun(object):
         """
         return np.zeros((self.d, self.d))
 
-    def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
-        """Some recursive magic.
-        """
+    def _follow_chains(self, p, pprod_mat, p_orig, idcs,
+                       propmat, reclev=0):
+        r''' Documentation missing ...
+        '''
         r = self.pdg2pref
 
         if dbg > 2:
