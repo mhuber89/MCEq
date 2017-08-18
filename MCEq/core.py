@@ -639,7 +639,6 @@ class MCEqRun(object):
         self._init_alias_tables()
         self._init_default_matrices(skip_D_matrix=False)
 
-    
     def set_interaction_model(self, interaction_model, charm_model=None, na49_model=(None,'all'),
             force=False):
         r"""Sets interaction model and/or an external charm model for calculation.
